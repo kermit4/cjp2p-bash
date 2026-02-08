@@ -3,7 +3,7 @@ trap 'echo $0 failed at $BASH_COMMAND ;echo $0 failed at $BASH_COMMAND >&2 ' ERR
 export RUST_BACKTRACE=1
 export  RUST_LOG=warn
 coproc ./target/release/cjp2p-bash
-cd /dev/shm
+#cd /dev/shm
 mkdir -p ${0##*/}.dir
 cd ${0##*/}.dir
 exec 10<&${COPROC[0]}    
