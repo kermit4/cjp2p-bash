@@ -167,7 +167,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cjp2p-rust-minimal"
+name = "cjp2p-bash"
 version = "0.1.0"
 dependencies = [
  "base64",
