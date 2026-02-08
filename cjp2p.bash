@@ -52,7 +52,7 @@ while true;do
     fi
     read len <&10
     messages=$(mktemp -p . messages.XXXXXXXXX)
-    head -${len}c <&10 > $messages
+    head -c $len <&10 > $messages
 #    jq -C < messages.json
 #    [{"Content":{"base64":"vLTtmB1Ot1dumq1Hscila3uKZF71KU2E3mDH","eof":1073741824,"id":"1024M","offset":204791808}}]
     { 
