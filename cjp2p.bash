@@ -30,7 +30,7 @@ please_send_peers() {
 }
 req() {
     ((offset_wanted<eof)) || return 0
-    [[ $src ]] || src=$(find peers/ -mmin -10 -type f -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
+    [[ ${src:-} ]] || src=$(find peers/ -mmin -10 -type f -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
     debug requesting $offset_wanted from $src window $((offset_wanted - ${offset_in:-0}))
     message="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}]"
     let offset_wanted+=$BLOCK_SIZE
@@ -43,7 +43,7 @@ req() {
 }
 id=$(ls incoming/|head -1) # currrently does only one file at a time
 while true;do
-    if ! read -rt 1  -u 10 src ;then # bump
+    if ! vars=($(timeout 1 head -c 33 <&10 ))  ;then # bump
         [[ $id ]] && {
             ((offset_wanted>eof)) && 
             (($(find incoming/$id/ -mindepth 1 |wc -l) < $(((eof+BLOCK_SIZE-1)/BLOCK_SIZE)))) && {  # missing parts
@@ -61,8 +61,9 @@ while true;do
         }
         continue
     fi
+    src=${vars[0]}
+    len=${vars[1]}
     touch peers/$src
-    read -r -u 10 len 
     messages=m.$((n++))
     head -c $len <&10 > $messages
 #    jq -C < $messages
@@ -79,7 +80,7 @@ while true;do
             debug duplicate received block  $file 
         else
             jq -er '.[]|select(.Content)|.Content.base64' < $messages  |
-                base64 -d  > $file 2>/dev/null  || [ . ]
+                base64 -d  > $file 2>/dev/null  || [ . ]  # oddly forkingg here or anywhere doesnt make this go noticably faster. 
         fi
         req >&11
         (((RANDOM%101)==0)) && req >&11 # increase packets in flight, so its faster than blocksize/rtt

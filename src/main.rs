@@ -96,8 +96,7 @@ fn main() -> Result<(), std::io::Error> {
                     debug!("Received from {}: {:?}", src, &buffer[..message_len]);
                     info!("incoming message from {src}",);
                     //unsafe { let stdout = File::from_raw_fd(1); } // inconsistently, unbuffered writing to stdout is "unsafe" in rust, but not to any other file.
-                    println!("{0}", src);
-                    println!("{0}", message_len);
+                    println!("{:25} {:6}", src,message_len);
                     std::io::stdout().flush().ok();
                     stdout.write(&buffer[0..message_len]).unwrap();
                 }
