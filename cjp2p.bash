@@ -1,9 +1,9 @@
 #!/bin/bash -eu
 debug() {
     :
-    #echo "$*" >&2
+    echo "$*" >&2
 }
-trap 'echo $0 failed at $BASH_COMMAND ;echo $0 failed at $BASH_COMMAND >&2 ' ERR
+trap 'echo $0 failed at $LINENO $BASH_COMMAND ;echo $0 failed at $BASH_COMMAND >&2 ' ERR
 export RUST_BACKTRACE=1
 export  RUST_LOG=warn
 coproc ./target/release/cjp2p-bash
@@ -23,23 +23,23 @@ BLOCK_SIZE=$((0xa000))
 please_send_peers() {
     src=$(ls peers/ -tr|tail -20|sort -R|tail -1)
     debug requesting peers from $src
-    message="[{\"PleaseSendPeers\":{}}]"
+    message_out="[{\"PleaseSendPeers\":{}}]"
     echo $src
-    echo ${#message}
-    echo -n "$message"
+    echo ${#message_out}
+    echo -n "$message_out"
 }
 req() {
     ((offset_wanted<eof)) || return 0
     [[ ${src:-} ]] || src=$(find peers/ -mmin -10 -type f -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
     debug requesting $offset_wanted from $src window $((offset_wanted - ${offset_in:-0}))
-    message="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}]"
+    message_out="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}]"
     let offset_wanted+=$BLOCK_SIZE
     while [[ -s incoming/$id/$offset_wanted ]];do 
         let offset_wanted+=$BLOCK_SIZE
     done
     echo $src
-    echo ${#message}
-    echo -n "$message"
+    echo ${#message_out}
+    echo -n "$message_out"
 }
 id=$(ls incoming/|head -1) # currrently does only one file at a time
 while true;do
@@ -64,42 +64,53 @@ while true;do
     src=${vars[0]}
     len=${vars[1]}
     touch peers/$src
-    messages=m.$((n++))
-    head -c $len <&10 > $messages
-#    jq -C < $messages
-#    [{"Content":{"base64":"vLTtmB1Ot1dumq1Hscila3uKZF71KU2E3mDH","eof":1073741824,"id":"1024M","offset":204791808}}]
-    vars=($(jq -er  '.[]|select(.Content)|.Content|(.offset |tostring) +" " + .id' < $messages)) || [ . ]
-    if [ ${vars[1]:-} ]; then
-        offset_in=${vars[0]}
-        id_=${vars[1]}
-        id=${id_##*/} # security
-        offset_in=${offset_in##*/} # security
-        debug received $id $offset_in window $((offset_wanted - $offset_in))
-        file=incoming/$id/$offset_in
-        if [[ -s $file ]];then
-            debug duplicate received block  $file 
-        else
-            jq -er '.[]|select(.Content)|.Content.base64' < $messages  |
-                base64 -d  > $file 2>/dev/null  || [ . ]  # oddly forkingg here or anywhere doesnt make this go noticably faster. 
-        fi
-        req >&11
-        (((RANDOM%101)==0)) && req >&11 # increase packets in flight, so its faster than blocksize/rtt
-#[   {     "PleaseSendPeers": {}   },   {     "PleaseReturnThisMessage": {       "sent_at": 11151.745030629     }   } ]
-    elif read -r returned_message < <(jq -cer  '.[]|select(.PleaseReturnThisMessage)|.PleaseReturnThisMessage' < $messages) &&  [ $returned_message ] ;then
-        message="[{\"ReturnedMessage\":$returned_message}]"
-        debug sending to $src "$message" 
-        {
-            echo $src
-            echo ${#message}
-            echo -n "$message"
-        } >&11
-        (((RANDOM%3)==0)) && src= req >&11 # try other sources sometimes
-    elif read -r peers < <(jq -cer  '.[]|.Peers' < $messages) &&  [ $peers ] ;then
-        comm -2 -3 <(jq -cer '.peers[]' <<<$peers |sort ) <(ls peers/ ) |tee >(debug $(wc -l) new peers from $src: ) | (cd peers;xargs --no-run-if-empty touch -d @1 )
-    else
-        (((RANDOM%11)==0)) && please_send_peers >&11
-        (((RANDOM%3)==0)) && src= req >&11 # try other sources sometimes
-        echo -n $src said\  ;jq -cC . < $messages || cat $messages
-    fi 
-    rm -rf $messages
+    head -c $len <&10 |
+        jq -c '.[]' | 
+        split -l 1
+    for message_in in x??;do 
+    #    jq -C <$message_in
+    #    [{"Content":{"base64":"vLTtmB1Ot1dumq1Hscila3uKZF71KU2E3mDH","eof":1073741824,"id":"1024M","offset":204791808}}]
+        case $(jq -r 'keys[0]' <$message_in) in
+            Content) vars=($(jq -er '.Content|(.offset |tostring) +" " + .id' <$message_in)) || [ . ]
+                if [ ${vars[1]:-} ]; then
+                    offset_in=${vars[0]##*/}
+                    id=${vars[1]##&/}
+                    debug received $id $offset_in window $((offset_wanted - $offset_in)) from $src
+                    file=incoming/$id/$offset_in
+                    if [[ -s $file ]];then
+                        debug duplicate received block  $file 
+                    else
+                        jq -er 'select(.Content)|.Content.base64' < $message_in  |
+                            base64 -d  > $file 2>/dev/null  || [ . ]  # oddly forkingg here or anywhere doesnt make this go noticably faster. 
+                    fi
+                    req >&11
+                    (((RANDOM%101)==0)) && req >&11 # increase packets in flight, so its faster than blocksize/rtt
+            #[   {     "PleaseSendPeers": {}   },   {     "PleaseReturnThisMessage": {       "sent_at": 11151.745030629     }   } ]
+                fi
+                ;;
+            PleaseReturnThisMessage) 
+                returned_message=$(jq -cer  '.PleaseReturnThisMessage' < $message_in)
+                message_out="[{\"ReturnedMessage\":$returned_message}]"
+                debug sending to $src "$message_out" 
+                {
+                    echo $src
+                    echo ${#message_out}
+                    echo -n "$message_out"
+                } >&11
+                (((RANDOM%3)==0)) && src= req >&11 # try other sources sometimes
+                ;;
+            Peers) 
+                comm -2 -3 <(jq -cer 'Peers.peers[]' < $message_in |sort ) <(ls peers/ ) |
+                    tee >(debug $(wc -l) new peers from $src: ) | 
+                    (cd peers;xargs --no-run-if-empty touch -d @1 )
+                ;;
+            *)
+                echo unknown message:;cat $message_in
+                (((RANDOM%11)==0)) && please_send_peers >&11
+                (((RANDOM%3)==0)) && src= req >&11 # try other sources sometimes
+                echo -n $src said\  ;jq -cC . < $message_in || cat $message_in
+                ;;
+        esac
+    done
+    rm -f x??
 done
