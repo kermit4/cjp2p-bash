@@ -33,7 +33,7 @@ use nix::sys::select::{select, FdSet};
 
 fn main() -> Result<(), std::io::Error> {
     env_logger::init();
-    let socket = UdpSocket::bind("0.0.0.0:24255")?;
+    let socket = UdpSocket::bind("0.0.0.0:24256")?;
     socket.set_broadcast(true).ok();
     //  let mut args = env::args();
     //    args.next();
