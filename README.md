@@ -10,4 +10,6 @@ It's fairly slow, topping out at 35Mbps on my Intel(R) Core(TM) i5-7200U CPU @ 2
 
 TODO
 reply with Peers to PleaseSendPeers
-reply to PleaseSendContent
+
+
+The socket handler could be rewritten as just dropping packets into a dir as files, with the source host:ip.random and the BASH could do the same in an outgoing dir.  idk if that's any faster, but it would handle parallelism better, no single channel of bottleneck.
