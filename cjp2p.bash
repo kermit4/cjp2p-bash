@@ -110,7 +110,9 @@ while [ . ]  ;do
                         fi
                         if ((blocks_complete==blocks_wanted));then
                             mkdir -p complete
-                            find "incoming/$id/" -mindepth 1 -print0|sort --zero-terminated --numeric-sort --key=3 --field-separator / |xargs --null cat -- > "complete/$id"
+                            find "incoming/$id/" -mindepth 1 -not -name '.*' -print0|
+                                sort --zero-terminated --numeric-sort --key=3 --field-separator / |
+                                xargs --null cat -- > "complete/$id"
                             rm -rf -- "incoming/$id"
                             echo "$id finished"
                             id=$(ls incoming/|head -1)
