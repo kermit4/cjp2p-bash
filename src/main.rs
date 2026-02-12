@@ -45,7 +45,7 @@ fn main() -> Result<(), std::io::Error> {
     let mut buffer = [0; 0x10000];
     let stdin = std::io::stdin();
     let stdin_fd = stdin.as_fd();
-    let mut stdout = File::create("/proc/self/fd/1").unwrap(); // there surpsingly does not appear to be a simple non-unsafe{} way to write to stdout without buffering, stdout is treated too specially in Rust (and no, just calling flush() does NOT do the same thing)
+    let mut stdout = File::create("/proc/self/fd/1").unwrap(); // there surpsingly does not appear to be a simple non-unsafe{} way to write to an inherited file descriptor without buffering without unsafe, (and no, just calling flush() does NOT do the same thing)
     loop {
         let mut read_fds = FdSet::new();
         read_fds.insert(udp_fd);
@@ -83,11 +83,9 @@ fn main() -> Result<(), std::io::Error> {
             debug!("line2:{line}");
             let bytes_to_read: usize = line.trim().parse().unwrap();
             let mut message = vec![0u8; bytes_to_read];
-            let message_len = std::io::stdin()
-                .read(&mut message[..bytes_to_read])
-                .unwrap();
-            assert!(message_len == bytes_to_read);
-            socket.send_to(&message[..message_len], dst).ok();
+            std::io::stdin()
+                .read_exact(&mut message[..bytes_to_read])?;
+            socket.send_to(&message[..bytes_to_read], dst).ok();
         }
 
         if read_fds.contains(udp_fd) {

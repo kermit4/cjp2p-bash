@@ -1,4 +1,13 @@
-This implements the https://github.com/kermit4/cjp2p protocol.
+This implements some https://github.com/kermit4/cjp2p protocol.
+
+messages handled:
+Content receive/send
+Peers receive/send
+PleaseSendContent receive/send
+PleaseSendPeers receive/send
+PleaseReturnThisMessage receive
+ReturnedMessage send
+
 
 Unfortunately BASH's networking capability was limited so it needed some Rust to use the socket.  You could make the Rust part in many other languages easily if you prefer.
 
