@@ -1,12 +1,16 @@
 #!/bin/bash -eu
-debug() {
+info() {
     :
     echo "$*" >&2
+}
+debug() {
+    :
+#    echo "$*" >&2
 }
 trap 'echo $0 failed at $LINENO $BASH_COMMAND ;echo $0 failed at $BASH_COMMAND >&2 ' ERR
 export RUST_BACKTRACE=1
 export  RUST_LOG=warn
-#coproc strace -tt -e t=read,write ./target/release/cjp2p-bash   
+#coproc strace  -s 999 -tt -e t=read,write ./target/release/cjp2p-bash   
 coproc ./target/release/cjp2p-bash   
 #cd /dev/shm
 mkdir -p ${0##*/}.dir
@@ -26,7 +30,7 @@ n=0
 #[   {     "PleaseSendPeers": {}   },   {     "PleaseReturnThisMessage": {       "sent_at": 11151.745030629     }   } ]
 please_send_peers() {
     src=$(ls peers/ -tr|tail -20|sort -R|tail -1)
-    debug requesting peers from $src
+    debug "requesting peers from $src"
     message_out="[{\"PleaseSendPeers\":{}}]"
     echo -ne "$src\n${#message_out}\n$message_out"
 }
@@ -39,7 +43,7 @@ req() {
         let offset_wanted+=$BLOCK_SIZE
     done
     [[ ${src:-} ]] || src=$(find peers/ -mmin -10 -type f -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
-    debug "requesting $offset_wanted from $src window $((offset_wanted - ${offset_in:-0})), complete $blocks_complete of wanted $blocks_wanted of eof $eof"
+    info "requesting $offset_wanted from $src window $((offset_wanted - ${offset_in:-0})), complete $blocks_complete of wanted $blocks_wanted of eof $eof"
     message_out="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}]"
     echo -ne "$src\n${#message_out}\n$message_out"
     let offset_wanted+=$BLOCK_SIZE
@@ -47,7 +51,7 @@ req() {
 id=$(ls incoming/|head -1) # currrently does only one file at a time
 last_maintenances=0
 while [ . ]  ;do
-    #vars=($(timeout 1 strace -e t=read,write head -c 33 <&10 ))   || [ . ] #  race where the head can succeede but not exit in time so be killed so timeout reports failure
+    #vars=($(timeout 1 strace  -s 999 -e t=read,write head -c 33 <&10 ))   || [ . ] #  race where the head can succeede but not exit in time so be killed so timeout reports failure
     vars=($(timeout 1 head -c 33 <&10 ))   || [ . ] #  race where the head can succeede but not exit in time so be killed so timeout reports failure
     if ((last_maintenances<SECONDS));then
         let last_maintenances=SECONDS
@@ -86,10 +90,10 @@ while [ . ]  ;do
                     offset_in="${vars[0]}"
                     id="${vars[1]}"
                     if [[ -d "incoming/$id" ]];then
-                        debug "received $id $offset_in window $((offset_wanted - $offset_in)) from $src"
+                        info "received $id $offset_in window $((offset_wanted - $offset_in)) from $src"
                         file="incoming/$id/$offset_in"
                         if [[ -s "$file" ]];then
-                            debug "duplicate received block  $file"
+                            info "duplicate received block  $file"
                         else
                             let ++blocks_complete
                             jq -er 'select(.Content)|.Content.base64' < $message_in  |
@@ -125,7 +129,7 @@ while [ . ]  ;do
                             head -c "$length" 
                     fi  |
                         base64 -w 0 | 
-                        jq  -cRjn "[{\"Content\":{\"offset\":$offset,\"id\":\"$id\",\"base64\":input}]" > message_out 2>/dev/null &&
+                        jq  -cRj "[{\"Content\":{\"offset\":$offset,\"id\":\"$id\",\"base64\":.}]" > message_out 2>/dev/null &&
                         {
                             echo -e "$src\n$(wc -c < message_out )" 
                             cat message_out 
