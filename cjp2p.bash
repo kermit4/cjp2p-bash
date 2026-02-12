@@ -23,6 +23,7 @@ offset_wanted=0
 eof=${2:-}
 id=${1:-}
 mkdir -p "incoming/$id" # this starts the transfer
+[[ $eof ]] && echo $eof > incoming/$id/.eof
 BLOCK_SIZE=$((0xa000))
 blocks_complete=$(ls "incoming/$id/" |wc -l)
 blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
@@ -36,9 +37,15 @@ please_send_peers() {
 }
 req() {
     [[ $id ]] || return 0
-    if ((offset_wanted>=eof));then 
-        offset_wanted=0
+    if [[ ${eof:-0} -gt 0 ]];then
+        if ((offset_wanted>=eof));then 
+            offset_wanted=0
+        fi
+    else
+        [[ -s "incoming/$id/.eof" ]] && eof=$(<"incoming/$id/.eof")
+        blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
     fi
+           
     while [[ -s incoming/$id/$offset_wanted ]];do 
         let offset_wanted+=$BLOCK_SIZE
     done
@@ -49,6 +56,7 @@ req() {
     let offset_wanted+=$BLOCK_SIZE
 }
 id=$(ls incoming/|head -1) # currrently does only one file at a time
+[[ $id ]] && blocks_complete=$(ls "incoming/$id/" |wc -l)
 last_maintenances=0
 while [ . ]  ;do
     #vars=($(timeout 1 strace  -s 999 -e t=read,write head -c 33 <&10 ))   || [ . ] #  race where the head can succeede but not exit in time so be killed so timeout reports failure
@@ -88,8 +96,9 @@ while [ . ]  ;do
                 if vars=($(jq -er '.Content|(.offset |tostring) +" " + .id' < $message_in|tr -d /)) &&
                   [ "${vars[1]:-}" ]; then
                     offset_in="${vars[0]}"
-                    id="${vars[1]}"
-                    if [[ -d "incoming/$id" ]];then
+                    id_="${vars[1]}"
+                    if [[ -d "incoming/$id_" ]];then
+                        id=$id_
                         info "received $id $offset_in window $((offset_wanted - $offset_in)) from $src"
                         file="incoming/$id/$offset_in"
                         if [[ -s "$file" ]];then
@@ -103,14 +112,16 @@ while [ . ]  ;do
                             mkdir -p complete
                             find "incoming/$id/" -mindepth 1 -print0|sort --zero-terminated --numeric-sort --key=3 --field-separator / |xargs --null cat -- > "complete/$id"
                             rm -rf -- "incoming/$id"
-                            echo "$id done"
+                            echo "$id finished"
                             id=$(ls incoming/|head -1)
+                            [[ $id ]] && blocks_complete=$(ls "incoming/$id/" |wc -l)
                         else
                             req >&11
                             (((RANDOM%101)==0)) && req >&11 # increase packets in flight, so its faster than blocksize/rtt
                         fi
                     else
                         id=$(ls incoming/|head -1)
+                        [[ $id ]] && blocks_complete=$(ls "incoming/$id/" |wc -l)
                     fi
             #[   {     "PleaseSendPeers": {}   },   {     "PleaseReturnThisMessage": {       "sent_at": 11151.745030629     }   } ]
                 fi
@@ -119,17 +130,17 @@ while [ . ]  ;do
                 if vars=($(jq -er '.PleaseSendContent|(.offset |tostring) +" " + .id + " " + (.length|tostring)' < $message_in|tr -d / )) &&
                   [ ${vars[1]:-} ]; then
                     offset="${vars[0]}"
-                    id="${vars[1]}"
+                    id_outbound="${vars[1]}"
                     length="${vars[2]}"
-                    debug "received request for $id $offset ( $((offset>>12)) 4k blocks ) from $src"
-                    if [ -d incoming/$id ];then # this could be smarter about misaligned or different sized blocks, which is likely given this uses 40k blocks
-                        find "incoming/$id/" -name "$offset" -size "+$length" -exec head -c "$length" {} \; 
-                    elif [[ -s "complete/$id" ]];then 
-                        tail -c +$((offset+1)) "complete/$id" |
+                    debug "received request for $id_outbound $offset ( $((offset>>12)) 4k blocks ) from $src"
+                    if [ -d "incoming/$id_outbound" ];then # this could be smarter about misaligned or different sized blocks, which is likely given this uses 40k blocks
+                        find "incoming/$id_outbound/" -name "$offset" -size "+$length" -exec head -c "$length" {} \; 
+                    elif [[ -s "complete/$id_outbound" ]];then 
+                        tail -c +$((offset+1)) "complete/$id_outbound" |
                             head -c "$length" 
                     fi  |
                         base64 -w 0 | 
-                        jq  -cRj "[{\"Content\":{\"offset\":$offset,\"id\":\"$id\",\"base64\":.}]" > message_out 2>/dev/null &&
+                        jq  -cRj "[{\"Content\":{\"offset\":$offset,\"id_outbound\":\"$id_outbound\",\"base64\":.}]" > message_out 2>/dev/null &&
                         {
                             echo -e "$src\n$(wc -c < message_out )" 
                             cat message_out 
