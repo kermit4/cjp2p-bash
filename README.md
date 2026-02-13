@@ -21,4 +21,9 @@ TODO
 reply with Peers to PleaseSendPeers
 
 
-The socket handler could be rewritten as just dropping packets into a dir as files, with the source host:ip.random and the BASH could do the same in an outgoing dir.  idk if that's any faster, but it would handle parallelism better, no single channel of bottleneck.
+The socket handler could be rewritten as just dropping packets into a dir as files, with the source host:ip.random and the BASH could do the same in an outgoing dir.  idk if that's any faster, but it would handle parallelism better, no single channel of bottleneck.  Also it'd fix deadlocks and races.
+
+# todo
+
+- fix deadlocking when rust is writing to the BASH but the BASH is writing to the rust
+- consider the rare possibility of a race where the head -c 33 reads 33 but gets killed by the timeout before writing 33

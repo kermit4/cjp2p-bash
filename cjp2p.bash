@@ -5,7 +5,7 @@ info() {
 }
 debug() {
     :
-#    echo "$*" >&2
+#   echo "$*" >&2
 }
 trap 'echo $0 failed at $LINENO $BASH_COMMAND ;echo $0 failed at $BASH_COMMAND >&2 ' ERR
 export RUST_BACKTRACE=1
@@ -13,21 +13,11 @@ export  RUST_LOG=warn
 #coproc strace  -s 999 -tt -e t=read,write ./target/release/cjp2p-bash   
 coproc ./target/release/cjp2p-bash   
 #cd /dev/shm
-mkdir -p ${0##*/}.dir
-cd ${0##*/}.dir
-mkdir -p peers
+mkdir -p shared/peers
+cd shared
 >peers/159.69.54.127:24254
 exec 10<&${COPROC[0]}    
 exec 11<&${COPROC[1]}
-offset_wanted=0
-eof=${2:-}
-id=${1:-}
-mkdir -p "incoming/$id" # this starts the transfer
-[[ $eof ]] && echo $eof > incoming/$id/.eof
-BLOCK_SIZE=$((0xa000))
-blocks_complete=$(ls "incoming/$id/" |wc -l)
-blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
-n=0
 #[   {     "PleaseSendPeers": {}   },   {     "PleaseReturnThisMessage": {       "sent_at": 11151.745030629     }   } ]
 please_send_peers() {
     src=$(ls peers/ -tr|tail -20|sort -R|tail -1)
@@ -50,19 +40,29 @@ req() {
         let offset_wanted+=$BLOCK_SIZE
     done
     [[ ${src:-} ]] || src=$(find peers/ -mmin -10 -type f -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
-    info "requesting $offset_wanted from $src window $((offset_wanted - ${offset_in:-0})), complete $blocks_complete of wanted $blocks_wanted of eof $eof"
+    debug "requesting $id at $offset_wanted from $src window $((offset_wanted - ${offset_in:-0})), complete $blocks_complete of $blocks_wanted , eof $eof"
     message_out="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}]"
     echo -ne "$src\n${#message_out}\n$message_out"
     let offset_wanted+=$BLOCK_SIZE
 }
-id=$(ls incoming/|head -1) # currrently does only one file at a time
+offset_wanted=0
+eof=${2:-}
+id=${1:-}
+mkdir -p "incoming/$id" # this starts the transfer
+[[ $eof ]] && echo $eof > incoming/$id/.eof
+BLOCK_SIZE=$((0xa000))
+blocks_complete=$(ls "incoming/$id/" |wc -l)
+blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
+n=0
+[[ $id ]] || id=$(ls incoming/|head -1) # currrently does only one file at a time
+[[ $id ]] && req >&11
 [[ $id ]] && blocks_complete=$(ls "incoming/$id/" |wc -l)
-last_maintenances=0
+last_maintenance=0
 while [ . ]  ;do
     #vars=($(timeout 1 strace  -s 999 -e t=read,write head -c 33 <&10 ))   || [ . ] #  race where the head can succeede but not exit in time so be killed so timeout reports failure
     vars=($(timeout 1 head -c 33 <&10 ))   || [ . ] #  race where the head can succeede but not exit in time so be killed so timeout reports failure
-    if ((last_maintenances<SECONDS));then
-        let last_maintenances=SECONDS
+    if ((last_maintenance<SECONDS));then
+        let last_maintenance=SECONDS
         src= please_send_peers 
         please_send_peers 
         { 
@@ -77,17 +77,21 @@ while [ . ]  ;do
             src= req
         } 
     fi >&11
-    if [[ ! ${vars[1]:-} ]];then 
+    if [[ ! ${vars[0]:-} ]];then 
         debug "timeout"
         continue
     fi
     #else
+    echo vars0 ${vars[0]}
+    echo vars1 ${vars[1]}
     src=${vars[0]}
     len=${vars[1]}
+    debug got $len from $src 
     > peers/$src
     head -c $len <&10 |
         jq -c '.[]' | 
         split -l 1
+    [[ -e xaa ]] || continue
     for message_in in x??;do 
     #    jq -C < $message_in
     #    [{"Content":{"base64":"vLTtmB1Ot1dumq1Hscila3uKZF71KU2E3mDH","eof":1073741824,"id":"1024M","offset":204791808}}]
@@ -99,10 +103,10 @@ while [ . ]  ;do
                     id_="${vars[1]}"
                     if [[ -d "incoming/$id_" ]];then
                         id=$id_
-                        info "received $id $offset_in window $((offset_wanted - $offset_in)) from $src"
+                        debug "received $id $offset_in window $((offset_wanted - $offset_in)) from $src"
                         file="incoming/$id/$offset_in"
                         if [[ -s "$file" ]];then
-                            info "duplicate received block  $file"
+                            debug "duplicate received block  $file"
                         else
                             let ++blocks_complete
                             jq -er 'select(.Content)|.Content.base64' < $message_in  |
@@ -135,15 +139,17 @@ while [ . ]  ;do
                     id_outbound="${vars[1]}"
                     length="${vars[2]}"
                     debug "received request for $id_outbound $offset ( $((offset>>12)) 4k blocks ) from $src"
-                    if [ -d "incoming/$id_outbound" ];then # this could be smarter about misaligned or different sized blocks, which is likely given this uses 40k blocks
-                        find "incoming/$id_outbound/" -name "$offset" -size "+$length" -exec head -c "$length" {} \; 
+                    if [ -d "incoming/$id_outbound" ];then 
+                        find "incoming/$id_outbound/" -name "$((offset-(offset%BLOCK_SIZE)))" -size "+$((length-1+(offset%BLOCK_SIZE)))c"  -fprintf /proc/self/fd/2 "probably sending $id_outbound at $offset length $length to $src" -exec tail -c +$((1+(offset%BLOCK_SIZE))) {} \; | head -c "$length" 
                     elif [[ -s "complete/$id_outbound" ]];then 
                         tail -c +$((offset+1)) "complete/$id_outbound" |
                             head -c "$length" 
+                        debug "should be sending $id_outbound at $offset length $length to $src"
                     fi  |
                         base64 -w 0 | 
-                        jq  -cRj "[{\"Content\":{\"offset\":$offset,\"id_outbound\":\"$id_outbound\",\"base64\":.}]" > message_out 2>/dev/null &&
-                        {
+                        jq  -cRj "[{\"Content\":{\"offset\":$offset,\"id\":\"$id_outbound\",\"base64\":.}}]" > message_out && 
+                        [[ -s message_out ]] && {
+                            debug "really sending $id_outbound at $offset length $length to $src"
                             echo -e "$src\n$(wc -c < message_out )" 
                             cat message_out 
                         } >&11
