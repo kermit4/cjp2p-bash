@@ -82,8 +82,6 @@ while [ . ]  ;do
         continue
     fi
     #else
-    echo vars0 ${vars[0]}
-    echo vars1 ${vars[1]}
     src=${vars[0]}
     len=${vars[1]}
     debug got $len from $src 
