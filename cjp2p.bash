@@ -31,32 +31,34 @@ req() {
         if ((offset_wanted>=eof));then 
             offset_wanted=0
         fi
-    else
-        [[ -s "incoming/$id/.eof" ]] && eof=$(<"incoming/$id/.eof")
-        blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
     fi
            
     while [[ -s incoming/$id/$offset_wanted ]];do 
         let offset_wanted+=$BLOCK_SIZE
     done
-    [[ ${src:-} ]] || src=$(find peers/ -mmin -10 -type f -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
+    srcds=("incoming/$id/.peers/" peers/)
+    srcd=${srcds[RANDOM%2]}
+    [[ ${src:-} ]] || src=$(find "$srcd" -mindepth 1 -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
+    [[ ${src:-} ]] || src=$(find peers/ -mindepth 1 -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
     debug "requesting $id at $offset_wanted from $src window $((offset_wanted - ${offset_in:-0})), complete $blocks_complete of $blocks_wanted , eof $eof"
     message_out="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}]"
     echo -ne "$src\n${#message_out}\n$message_out"
     let offset_wanted+=$BLOCK_SIZE
 }
-offset_wanted=0
-eof=${2:-}
 id=${1:-}
+eof=${2:-}
 mkdir -p "incoming/$id" # this starts the transfer
-[[ $eof ]] && echo $eof > incoming/$id/.eof
 BLOCK_SIZE=$((0xa000))
-blocks_complete=$(ls "incoming/$id/" |wc -l)
-blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
-n=0
 [[ $id ]] || id=$(ls incoming/|head -1) # currrently does only one file at a time
-[[ $id ]] && req >&11
-[[ $id ]] && blocks_complete=$(ls "incoming/$id/" |wc -l)
+if [[ $id ]];then
+    mkdir -p "incoming/$id/.peers/"
+    [[ $eof ]] && echo $eof > incoming/$id/.eof
+    [[ $eof ]] || eof=$(<incoming/$id/.eof)
+    offset_wanted=0
+    blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
+    blocks_complete=$(ls "incoming/$id/" |wc -l)
+    req >&11
+fi
 last_maintenance=0
 while [ . ]  ;do
     #vars=($(timeout 1 strace  -s 999 -e t=read,write head -c 33 <&10 ))   || [ . ] #  race where the head can succeede but not exit in time so be killed so timeout reports failure
@@ -65,17 +67,15 @@ while [ . ]  ;do
         let last_maintenance=SECONDS
         src= please_send_peers 
         please_send_peers 
-        { 
-            req
-            src= req
-            src= req
-            src= req
-            src= req
-            src= req
-            src= req
-            src= req
-            src= req
-        } 
+        req
+        src= req
+        src= req
+        src= req
+        src= req
+        src= req
+        src= req
+        src= req
+        src= req
     fi >&11
     if [[ ! ${vars[0]:-} ]];then 
         debug "timeout"
@@ -96,7 +96,12 @@ while [ . ]  ;do
         case "$(jq -r 'keys[0]' <$message_in)" in
             Content) 
                 if vars=($(jq -er '.Content|(.offset |tostring) +" " + .id' < $message_in|tr -d /)) &&
-                  [ "${vars[1]:-}" ]; then
+                  [ "${vars[0]:-}" ]; then
+                    if [[ ! ${eof:-} ]];then
+                        eof=$(jq -er '.Content|(.eof |tostring)'  < $message_in|tr -d /) &&
+                        blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
+                        echo "$eof" > "incoming/$id/.eof"
+                    fi
                     offset_in="${vars[0]}"
                     id_="${vars[1]}"
                     if [[ -d "incoming/$id_" ]];then
@@ -106,15 +111,16 @@ while [ . ]  ;do
                         if [[ -s "$file" ]];then
                             debug "duplicate received block  $file"
                         else
-                            let ++blocks_complete
+                            > "incoming/$id/.peers/$src"
                             jq -er 'select(.Content)|.Content.base64' < $message_in  |
-                                base64 -d  > "$file" 2>/dev/null  || [ . ]  # oddly forkingg here or anywhere doesnt make this go noticably faster. 
+                                base64 -d  > "$file"
+                            # it should really check the length here
+                            [[ -s $file ]] && let ++blocks_complete
                         fi
                         if ((blocks_complete==blocks_wanted));then
-                            mkdir -p complete
-                            find "incoming/$id/" -mindepth 1 -not -name '.*' -print0|
-                                sort --zero-terminated --numeric-sort --key=3 --field-separator / |
-                                xargs --null cat -- > "complete/$id"
+                            find "incoming/$id/" -mindepth 1 -maxdepth 1 -not -name '.*'  |
+                                sort --numeric-sort --key 3 --field-separator / |
+                                xargs cat -- > "$id"
                             rm -rf -- "incoming/$id"
                             echo "$id finished"
                             id=$(ls incoming/|head -1)
@@ -132,26 +138,36 @@ while [ . ]  ;do
                 ;;
             PleaseSendContent) 
                 if vars=($(jq -er '.PleaseSendContent|(.offset |tostring) +" " + .id + " " + (.length|tostring)' < $message_in|tr -d / )) &&
-                  [ ${vars[1]:-} ]; then
+                  [ ${vars[0]:-} ]; then
                     offset="${vars[0]}"
                     id_outbound="${vars[1]}"
                     length="${vars[2]}"
                     debug "received request for $id_outbound $offset ( $((offset>>12)) 4k blocks ) from $src"
                     if [ -d "incoming/$id_outbound" ];then 
-                        find "incoming/$id_outbound/" -name "$((offset-(offset%BLOCK_SIZE)))" -size "+$((length-1+(offset%BLOCK_SIZE)))c"  -fprintf /proc/self/fd/2 "probably sending $id_outbound at $offset length $length to $src" -exec tail -c +$((1+(offset%BLOCK_SIZE))) {} \; | head -c "$length" 
-                    elif [[ -s "complete/$id_outbound" ]];then 
-                        tail -c +$((offset+1)) "complete/$id_outbound" |
-                            head -c "$length" 
+                        find "incoming/$id_outbound/" -name "$((offset-(offset%BLOCK_SIZE)))" -size "+$((length-1+(offset%BLOCK_SIZE)))c"  -fprintf /proc/self/fd/2 "probably sending $id_outbound at $offset length $length to $src" -exec tail -c +$((1+(offset%BLOCK_SIZE))) {} \; 2>/dev/null | 
+                            head -c "$length"  > raw
+                        eof_=$(<"incoming/$id_outbound/.eof")
+                        if [[ ! -s raw ]] || (((RANDOM%73)==0));then 
+                            message_out=$(find "incoming/$id_outbound/.peers/" -mindepth 1 -printf "%T@ %f\n" |sort -n|tail -200|sort -R|tail -20|
+                                        jq -c --null-input --raw-input "[{MaybeTheyHaveSome: { id: \"$id_outbound\", peers: [inputs|split(\" \")[1]]}}]")
+                            debug "sending $message_out"
+                            echo -ne "$src\n${#message_out}\n$message_out" 
+                        fi
+                    elif [[ -s "$id_outbound" ]];then 
+                        eof_=$(wc -c < "$id_outbound")
+                        tail -c +$((offset+1)) "$id_outbound" |
+                            head -c "$length"  > raw
                         debug "should be sending $id_outbound at $offset length $length to $src"
-                    fi  |
-                        base64 -w 0 | 
-                        jq  -cRj "[{\"Content\":{\"offset\":$offset,\"id\":\"$id_outbound\",\"base64\":.}}]" > message_out && 
-                        [[ -s message_out ]] && {
-                            debug "really sending $id_outbound at $offset length $length to $src"
-                            echo -e "$src\n$(wc -c < message_out )" 
-                            cat message_out 
-                        } >&11
-                fi
+                    fi  
+                    < raw base64 -w 0 | 
+                    jq  -cRj "[{\"Content\":{\"offset\":$offset,\"id\":\"$id_outbound\",\"eof\":$eof_,\"base64\":.}}]" > message_out && 
+                    [[ -s message_out ]] && {
+                        debug "really sending $id_outbound at $offset length $length to $src"
+                        echo -e "$src\n$(wc -c < message_out )" 
+                        cat message_out 
+                    } 
+                    rm -f message_out raw
+                fi >&11
                 ;;
             PleaseReturnThisMessage) 
                 returned_message=$(jq -cer  '.PleaseReturnThisMessage' < $message_in)
@@ -169,7 +185,14 @@ while [ . ]  ;do
             Peers) 
                 comm -2 -3 <(jq -cer '.Peers.peers[]' < $message_in |tr -d / | sort ) <(ls peers/ ) |
                     tee >(debug $(wc -l) new peers from $src: ) | 
-                    (cd peers;xargs --no-run-if-empty touch -d @1 )
+                    (cd peers && xargs --no-run-if-empty touch -d @1 )
+                ;;
+            MaybeTheyHaveSome) 
+                id_=$(jq -cer '.MaybeTheyHaveSome.id' < $message_in |tr -d / )
+                if [[ -d "incoming/$id_" ]];then
+                    jq -cer '.MaybeTheyHaveSome.peers[]' < $message_in |tr -d / |
+                    (cd "incoming/$id_/.peers" && xargs --verbose --no-run-if-empty touch --no-create -d @1 )
+                fi
                 ;;
             *)
                 (((RANDOM%11)==0)) && please_send_peers >&11
