@@ -4,8 +4,7 @@ info() {
     echo "$*" >&2
 }
 debug() {
-    :
-#   echo "$*" >&2
+    [[ ${DEBUG:-} ]] && echo "$*" >&2
 }
 trap 'echo $0 failed at $LINENO $BASH_COMMAND ;echo $0 failed at $BASH_COMMAND >&2 ' ERR
 export RUST_BACKTRACE=1
@@ -82,6 +81,7 @@ while [ . ]  ;do
         continue
     fi
     #else
+    debug "vars: ${#vars[@]} ${vars[$@]}"
     src=${vars[0]}
     len=${vars[1]}
     debug got $len from $src 
