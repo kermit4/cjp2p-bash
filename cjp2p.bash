@@ -5,6 +5,7 @@ info() {
 }
 debug() {
     [[ ${DEBUG:-} ]] && echo "$*" >&2
+    [ . ]
 }
 trap 'echo $0 failed at $LINENO $BASH_COMMAND ;echo $0 failed at $BASH_COMMAND >&2 ' ERR
 export RUST_BACKTRACE=1
