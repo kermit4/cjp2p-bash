@@ -43,6 +43,7 @@ req() {
     debug "requesting $id at $offset_wanted from $src window $((offset_wanted - ${offset_in:-0})), complete $blocks_complete of $blocks_wanted , eof $eof"
     message_out="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}]"
     echo -ne "$src\n${#message_out}\n$message_out"
+    debug "$message_out to $src"
     let offset_wanted+=$BLOCK_SIZE
 }
 id=${1:-}
@@ -53,7 +54,7 @@ BLOCK_SIZE=$((0xa000))
 if [[ $id ]];then
     mkdir -p "incoming/$id/.peers/"
     [[ $eof ]] && echo $eof > incoming/$id/.eof
-    [[ $eof ]] || eof=$(<incoming/$id/.eof)
+    [[ -r incoming/$id/.eof ]] && eof=$(<incoming/$id/.eof)
     offset_wanted=0
     blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
     blocks_complete=$(ls "incoming/$id/" |wc -l)
@@ -82,7 +83,7 @@ while [ . ]  ;do
         continue
     fi
     #else
-    debug "vars: ${#vars[@]} ${vars[$@]}"
+    debug "vars: ${#vars[@]} ${vars[@]}"
     src=${vars[0]}
     len=${vars[1]}
     debug got $len from $src 
@@ -107,7 +108,6 @@ while [ . ]  ;do
                     id_="${vars[1]}"
                     if [[ -d "incoming/$id_" ]];then
                         id=$id_
-                        debug "received $id $offset_in window $((offset_wanted - $offset_in)) from $src"
                         file="incoming/$id/$offset_in"
                         if [[ -s "$file" ]];then
                             debug "duplicate received block  $file"
@@ -116,7 +116,13 @@ while [ . ]  ;do
                             jq -er 'select(.Content)|.Content.base64' < $message_in  |
                                 base64 -d  > "$file"
                             # it should really check the length here
-                            [[ -s $file ]] && let ++blocks_complete
+                            this_block_size=$(wc -c < $file )
+                            debug "received $this_block_size of $id $offset_in window $((offset_wanted - $offset_in)) from $src"
+                            if ((this_block_size == BLOCK_SIZE))  || (((this_block_size+offset_in)==eof));then
+                                let ++blocks_complete
+                            else
+                                rm $file
+                            fi
                         fi
                         if ((blocks_complete==blocks_wanted));then
                             find "incoming/$id/" -mindepth 1 -maxdepth 1 -not -name '.*'  |
@@ -125,7 +131,12 @@ while [ . ]  ;do
                             rm -rf -- "incoming/$id"
                             echo "$id finished"
                             id=$(ls incoming/|head -1)
-                            [[ $id ]] && blocks_complete=$(ls "incoming/$id/" |wc -l)
+                            if [[ $id ]];then
+                                offset_wanted=0
+                                eof=$(<incoming/$id/.eof)
+                                blocks_wanted=$(((eof+BLOCK_SIZE-1)/BLOCK_SIZE))
+                                blocks_complete=$(ls "incoming/$id/" |wc -l)
+                            fi
                         else
                             req >&11
                             (((RANDOM%101)==0)) && req >&11 # increase packets in flight, so its faster than blocksize/rtt
@@ -160,7 +171,7 @@ while [ . ]  ;do
                             head -c "$length"  > raw
                         debug "should be sending $id_outbound at $offset length $length to $src"
                     fi  
-                    < raw base64 -w 0 | 
+                    [[ -s raw ]]  && < raw base64 -w 0 | 
                     jq  -cRj "[{\"Content\":{\"offset\":$offset,\"id\":\"$id_outbound\",\"eof\":$eof_,\"base64\":.}}]" > message_out && 
                     [[ -s message_out ]] && {
                         debug "really sending $id_outbound at $offset length $length to $src"
