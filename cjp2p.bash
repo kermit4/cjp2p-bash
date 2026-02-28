@@ -203,7 +203,7 @@ while [ . ]  ;do
                 id_=$(jq -cer '.MaybeTheyHaveSome.id' < $message_in |tr -d / )
                 if [[ -d "incoming/$id_" ]];then
                     jq -cer '.MaybeTheyHaveSome.peers[]' < $message_in |tr -d / |
-                    (cd "incoming/$id_/.peers" && xargs --verbose --no-run-if-empty touch --no-create -d @1 )
+                    (cd "incoming/$id_/.peers" && xargs --no-run-if-empty touch --no-create -d @1 )
                 fi
                 ;;
             *)
