@@ -41,7 +41,9 @@ req() {
     [[ ${src:-} ]] || src=$(find "$srcd" -mindepth 1 -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
     [[ ${src:-} ]] || src=$(find peers/ -mindepth 1 -printf "%T@\t%f\n" |sort -n|tail -20|sort -R|tail -1|cut -f 2 )
     debug "requesting $id at $offset_wanted from $src window $((offset_wanted - ${offset_in:-0})), complete $blocks_complete of $blocks_wanted , eof $eof"
-    message_out="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}]"
+    always_returned=""
+    [[ -s "peers/$src" ]] && always_returned=",{\"AlwaysReturned\":$(<"peers/$src")}"
+    message_out="[{\"PleaseSendContent\":{\"id\":\"$id\",\"length\":$BLOCK_SIZE,\"offset\":$offset_wanted}}$always_returned]"
     echo -ne "$src\n${#message_out}\n$message_out"
     debug "$message_out to $src"
     let offset_wanted+=$BLOCK_SIZE
@@ -87,11 +89,11 @@ while [ . ]  ;do
     src=${vars[0]}
     len=${vars[1]}
     debug got $len from $src 
-    > peers/$src
     head -c $len <&10 |
         jq -c '.[]' | 
         split -l 1
     [[ -e xaa ]] || continue
+    always_return=""
     for message_in in x??;do 
     #    jq -C < $message_in
     #    [{"Content":{"base64":"vLTtmB1Ot1dumq1Hscila3uKZF71KU2E3mDH","eof":1073741824,"id":"1024M","offset":204791808}}]
@@ -199,6 +201,9 @@ while [ . ]  ;do
                     tee >(debug $(wc -l) new peers from $src: ) | 
                     (cd peers && xargs --no-run-if-empty touch -d @1 )
                 ;;
+            PleaseAlwaysReturnThisMessage) 
+                always_return=$(jq -cer '.PleaseAlwaysReturnThisMessage' < $message_in |tr -d / )
+                ;;
             MaybeTheyHaveSome) 
                 id_=$(jq -cer '.MaybeTheyHaveSome.id' < $message_in |tr -d / )
                 if [[ -d "incoming/$id_" ]];then
@@ -213,5 +218,6 @@ while [ . ]  ;do
                 ;;
         esac
     done
+    [[ $always_return ]] && echo -n "$always_return" > "peers/$src"
     rm -f x??
 done

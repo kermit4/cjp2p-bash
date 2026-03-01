@@ -7,7 +7,9 @@ messages handled:
 - PleaseSendPeers receive/send
 - PleaseReturnThisMessage receive
 - ReturnedMessage send
-. MaybeTheyHaveSome send/receive
+- MaybeTheyHaveSome send/receive
+- PleaseAlwaysReturnThisMessage receive
+- AlwaysReturned send
 
 
 Unfortunately BASH's networking capability was limited so it needed some Rust to use the socket.  You could make the Rust part in many other languages easily if you prefer.
