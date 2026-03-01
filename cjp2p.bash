@@ -22,7 +22,9 @@ exec 11<&${COPROC[1]}
 please_send_peers() {
     src=$(ls peers/ -tr|tail -20|sort -R|tail -1)
     debug "requesting peers from $src"
-    message_out="[{\"PleaseSendPeers\":{}}]"
+    always_returned=""
+    [[ -s "peers/$src" ]] && always_returned=",{\"AlwaysReturned\":$(<"peers/$src")}"
+    message_out="[{\"PleaseSendPeers\":{}}$always_returned]"
     echo -ne "$src\n${#message_out}\n$message_out"
 }
 req() {
